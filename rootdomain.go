@@ -1,4 +1,4 @@
-package tldextract
+package rootdomain
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//used for Result.Flag
+// used for Result.Flag
 const (
 	Malformed = iota
 	Domain
@@ -190,7 +190,7 @@ func (extract *TLDExtract) getTldIndex(labels []string) (int, bool) {
 	return -1, false
 }
 
-//return sub domain,root domain
+// return sub domain,root domain
 func subdomain(d string) (string, string) {
 	ps := strings.Split(d, ".")
 	l := len(ps)

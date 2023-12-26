@@ -1,4 +1,4 @@
-package tldextract
+package rootdomain
 
 import (
 	"fmt"

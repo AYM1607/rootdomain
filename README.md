@@ -1,16 +1,16 @@
-tldextract
+rootdomain
 ==========
 
 Extract root domain, subdomain name, tld from a url, using the [the Public Suffix List](http://www.publicsuffix.org).
 
 Installation
 ==========
-Install tldextract:
+Install rootdomain:
 ```sh
-go get github.com/joeguo/tldextract
+go get github.com/AYM1607/rootdomain
 
 ```
-To run unit tests, run this command  in tldextract's source directory($GOPATH/src/github.com/joeguo/tldextract):
+To run unit tests, run this command  in rootdomains's source:
 
 ```sh
 go test
@@ -22,15 +22,15 @@ Example
 package main
 
 import (
-"fmt"
-"github.com/joeguo/tldextract"
+	"fmt"
+	"github.com/AYM1607/rootdomain"
 )
 
 
 func main() {
 	urls := []string{"git+ssh://www.github.com:8443/", "http://media.forums.theregister.co.uk", "http://218.15.32.76", "http://google.com?q=cats"}
 	cache := "/tmp/tld.cache"
-	extract, _ := tldextract.New(cache,false)
+	extract, _ := rootdomain.New(cache,false)
 
 	for _, u := range (urls) {
 		result:=extract.Extract(u)
