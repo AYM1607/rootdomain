@@ -3,9 +3,10 @@ package rootdomain
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -47,13 +48,13 @@ var (
 
 // New creates a new *TLDExtract, it may be shared between goroutines, we usually need a single instance in an application.
 func New(cacheFile string, debug bool) (*TLDExtract, error) {
-	data, err := ioutil.ReadFile(cacheFile)
+	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		data, err = download()
 		if err != nil {
 			return &TLDExtract{}, err
 		}
-		if err = ioutil.WriteFile(cacheFile, data, 0644); err != nil {
+		if err = os.WriteFile(cacheFile, data, 0644); err != nil {
 			return &TLDExtract{}, err
 		}
 	}
@@ -207,7 +208,7 @@ func download() ([]byte, error) {
 		return []byte(""), err
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 
 	lines := strings.Split(string(body), "\n")
 	var buffer bytes.Buffer
