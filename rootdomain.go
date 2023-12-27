@@ -1,6 +1,7 @@
 package rootdomain
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -14,10 +15,22 @@ const (
 )
 
 type Result struct {
-	Flag int
-	Sub  string
-	Sld  string
-	Tld  string
+	flag int
+	sub  string
+	sld  string
+	tld  string
+}
+
+func (r *Result) GetRootDomain() string {
+	return r.sld + "." + r.tld
+}
+
+func (r *Result) GetSubDomain() string {
+	return r.sub
+}
+
+func (r *Result) GetTopLevelDomain() string {
+	return r.tld
 }
 
 type TLDExtract struct {
@@ -41,19 +54,15 @@ func New(debug bool) (*TLDExtract, error) {
 	return extractor, nil
 }
 
-func (extract *TLDExtract) Extract(u string) *Result {
-	extract.m.RLock()
-	defer extract.m.RUnlock()
+func (e *TLDExtract) Extract(u string) (*Result, error) {
+	e.m.RLock()
+	defer e.m.RUnlock()
 
 	input := u
 	u = strings.ToLower(u)
 	// TODO: Since this is meant to be used in an SNI context this filtering
 	// can probably be done in linear time instead of with a regex.
 	u = schemaregex.ReplaceAllString(u, "")
-	i := strings.Index(u, "@")
-	if i != -1 {
-		u = u[i+1:]
-	}
 	index := strings.IndexFunc(u, func(r rune) bool {
 		switch r {
 		case '&', '/', '?', ':', '#':
@@ -64,27 +73,27 @@ func (extract *TLDExtract) Extract(u string) *Result {
 	if index != -1 {
 		u = u[0:index]
 	}
-	if extract.debug {
+	if e.debug {
 		fmt.Printf("%s;%s\n", u, input)
 	}
-	return extract.extract(u)
+	return e.extract(u)
 }
 
-func (extract *TLDExtract) extract(url string) *Result {
-	domain, tld := extract.extractTld(url)
+func (e *TLDExtract) extract(url string) (*Result, error) {
+	domain, tld := e.extractTld(url)
 	if tld == "" {
-		return &Result{Flag: Malformed}
+		return nil, errors.New("could not find a valid tld")
 	}
 	sub, root := subdomain(domain)
 	if domainregex.MatchString(root) {
-		return &Result{Flag: Domain, Sld: root, Sub: sub, Tld: tld}
+		return &Result{flag: Domain, sld: root, sub: sub, tld: tld}, nil
 	}
-	return &Result{Flag: Malformed}
+	return nil, errors.New("")
 }
 
-func (extract *TLDExtract) extractTld(url string) (domain, tld string) {
+func (e *TLDExtract) extractTld(url string) (domain, tld string) {
 	spl := strings.Split(url, ".")
-	tldIndex, validTld := extract.getTldIndex(spl)
+	tldIndex, validTld := e.getTldIndex(spl)
 	if validTld {
 		domain = strings.Join(spl[:tldIndex], ".")
 		tld = strings.Join(spl[tldIndex:], ".")
@@ -94,8 +103,8 @@ func (extract *TLDExtract) extractTld(url string) (domain, tld string) {
 	return
 }
 
-func (extract *TLDExtract) getTldIndex(labels []string) (int, bool) {
-	t := extract.rootNode
+func (e *TLDExtract) getTldIndex(labels []string) (int, bool) {
+	t := e.rootNode
 	parentValid := false
 	for i := len(labels) - 1; i >= 0; i-- {
 		lab := labels[i]
