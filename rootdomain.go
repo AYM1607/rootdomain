@@ -1,132 +1,68 @@
 package rootdomain
 
 import (
-	"bytes"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"os"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // used for Result.Flag
 const (
 	Malformed = iota
 	Domain
-	Ip4
-	Ip6
 )
 
 type Result struct {
 	Flag int
 	Sub  string
-	Root string
+	Sld  string
 	Tld  string
 }
 
 type TLDExtract struct {
-	CacheFile  string
 	rootNode   *Trie
 	debug      bool
 	noValidate bool // do not validate URL schema
 	noStrip    bool // do not strip .html suffix from URL
-}
-
-type Trie struct {
-	ExceptRule bool
-	ValidTld   bool
-	matches    map[string]*Trie
+	m          sync.RWMutex
 }
 
 var (
 	schemaregex = regexp.MustCompile(`^([abcdefghijklmnopqrstuvwxyz0123456789\+\-\.]+:)?//`)
 	domainregex = regexp.MustCompile(`^[a-z0-9-\p{L}]{1,63}$`)
-	ip4regex    = regexp.MustCompile(`(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])`)
 )
 
 // New creates a new *TLDExtract, it may be shared between goroutines, we usually need a single instance in an application.
-func New(cacheFile string, debug bool) (*TLDExtract, error) {
-	data, err := os.ReadFile(cacheFile)
-	if err != nil {
-		data, err = download()
-		if err != nil {
-			return &TLDExtract{}, err
-		}
-		if err = os.WriteFile(cacheFile, data, 0644); err != nil {
-			return &TLDExtract{}, err
-		}
-	}
-	ts := strings.Split(string(data), "\n")
-	newMap := make(map[string]*Trie)
-	rootNode := &Trie{ExceptRule: false, ValidTld: false, matches: newMap}
-	for _, t := range ts {
-		if t != "" && !strings.HasPrefix(t, "//") {
-			t = strings.TrimSpace(t)
-			exceptionRule := t[0] == '!'
-			if exceptionRule {
-				t = t[1:]
-			}
-			addTldRule(rootNode, strings.Split(t, "."), exceptionRule)
-		}
-	}
-
-	return &TLDExtract{CacheFile: cacheFile, rootNode: rootNode, debug: debug}, nil
-}
-
-// SetNoValidate disables schema check in order to increase performance.
-func (extract *TLDExtract) SetNoValidate() {
-	extract.noValidate = true
-}
-
-// SetNoStrip disables URL stripping in order to increase performance.
-func (extract *TLDExtract) SetNoStrip() {
-	extract.noStrip = true
-}
-
-func addTldRule(rootNode *Trie, labels []string, ex bool) {
-	numlabs := len(labels)
-	t := rootNode
-	for i := numlabs - 1; i >= 0; i-- {
-		lab := labels[i]
-		m, found := t.matches[lab]
-		if !found {
-			except := ex
-			valid := !ex && i == 0
-			newMap := make(map[string]*Trie)
-			t.matches[lab] = &Trie{ExceptRule: except, ValidTld: valid, matches: newMap}
-			m = t.matches[lab]
-		}
-		t = m
-	}
+func New(debug bool) (*TLDExtract, error) {
+	rootNode := generateTldTrie(defaultSuffixData)
+	extractor := &TLDExtract{rootNode: rootNode, debug: debug}
+	go syncSuffixData(extractor)
+	return extractor, nil
 }
 
 func (extract *TLDExtract) Extract(u string) *Result {
+	extract.m.RLock()
+	defer extract.m.RUnlock()
+
 	input := u
 	u = strings.ToLower(u)
-	if !extract.noValidate {
-		u = schemaregex.ReplaceAllString(u, "")
-		i := strings.Index(u, "@")
-		if i != -1 {
-			u = u[i+1:]
-		}
-
-		index := strings.IndexFunc(u, func(r rune) bool {
-			switch r {
-			case '&', '/', '?', ':', '#':
-				return true
-			}
-			return false
-		})
-		if index != -1 {
-			u = u[0:index]
-		}
+	// TODO: Since this is meant to be used in an SNI context this filtering
+	// can probably be done in linear time instead of with a regex.
+	u = schemaregex.ReplaceAllString(u, "")
+	i := strings.Index(u, "@")
+	if i != -1 {
+		u = u[i+1:]
 	}
-	if !extract.noStrip {
-		if strings.HasSuffix(u, ".html") {
-			u = u[0 : len(u)-len(".html")]
+	index := strings.IndexFunc(u, func(r rune) bool {
+		switch r {
+		case '&', '/', '?', ':', '#':
+			return true
 		}
+		return false
+	})
+	if index != -1 {
+		u = u[0:index]
 	}
 	if extract.debug {
 		fmt.Printf("%s;%s\n", u, input)
@@ -137,18 +73,11 @@ func (extract *TLDExtract) Extract(u string) *Result {
 func (extract *TLDExtract) extract(url string) *Result {
 	domain, tld := extract.extractTld(url)
 	if tld == "" {
-		ip := net.ParseIP(url)
-		if ip != nil {
-			if ip4regex.MatchString(url) {
-				return &Result{Flag: Ip4, Root: url}
-			}
-			return &Result{Flag: Ip6, Root: url}
-		}
 		return &Result{Flag: Malformed}
 	}
 	sub, root := subdomain(domain)
 	if domainregex.MatchString(root) {
-		return &Result{Flag: Domain, Root: root, Sub: sub, Tld: tld}
+		return &Result{Flag: Domain, Sld: root, Sub: sub, Tld: tld}
 	}
 	return &Result{Flag: Malformed}
 }
@@ -199,27 +128,4 @@ func subdomain(d string) (string, string) {
 		return "", d
 	}
 	return strings.Join(ps[0:l-1], "."), ps[l-1]
-}
-
-func download() ([]byte, error) {
-	u := "https://publicsuffix.org/list/public_suffix_list.dat"
-	resp, err := http.Get(u)
-	if err != nil {
-		return []byte(""), err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	lines := strings.Split(string(body), "\n")
-	var buffer bytes.Buffer
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "//") {
-			buffer.WriteString(line)
-			buffer.WriteString("\n")
-		}
-	}
-
-	return buffer.Bytes(), nil
 }
